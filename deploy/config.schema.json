@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Deploy Agent project configuration",
+  "type": "object",
+  "required": ["version", "name", "root", "repository", "deployment"],
+  "properties": {
+    "version": {"const": 1},
+    "name": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"},
+    "root": {"type": "string"},
+    "repository": {"type": "object", "required": ["remote", "branch", "updateStrategy"], "properties": {"updateStrategy": {"enum": ["hard-reset", "fast-forward"]}}},
+    "deployment": {"type": "object", "required": ["commands"], "properties": {"commands": {"type": "array", "minItems": 1}}}
+  }
+}

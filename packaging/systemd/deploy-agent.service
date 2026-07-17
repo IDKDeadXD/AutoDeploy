@@ -1,0 +1,17 @@
+[Unit]
+Description=Deploy Agent
+After=network-online.target
+
+[Service]
+Type=simple
+User=deploy-agent
+Group=deploy-agent
+ExecStart=/usr/local/bin/deploy daemon
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/etc/deploy-agent /var/lib/deploy-agent /var/log/deploy-agent /run/deploy-agent
+
+[Install]
+WantedBy=multi-user.target
