@@ -10,6 +10,7 @@ type GlobalConfig struct {
 	PublicURL     string `json:"publicURL"`
 	MaxConcurrent int    `json:"maxConcurrent"`
 	ServiceUser   string `json:"serviceUser"`
+	BinaryPath    string `json:"binaryPath"`
 }
 
 type Project struct {

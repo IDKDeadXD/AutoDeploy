@@ -1,0 +1,7 @@
+{
+  "name": "deploy-agent-release-tools",
+  "private": true,
+  "scripts": {
+    "update": "node scripts/release.mjs"
+  }
+}

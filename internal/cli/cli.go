@@ -24,6 +24,7 @@ import (
 	"github.com/idkde/deploy-agent/internal/notify"
 	"github.com/idkde/deploy-agent/internal/secrets"
 	"github.com/idkde/deploy-agent/internal/store"
+	"github.com/idkde/deploy-agent/internal/updater"
 )
 
 var (
@@ -50,6 +51,8 @@ func (a App) Run(args []string) error {
 		return a.install(args[1:])
 	case "uninstall":
 		return a.uninstall()
+	case "update":
+		return a.update(args[1:])
 	case "init":
 		return a.init()
 	case "remove":
@@ -82,7 +85,7 @@ func (a App) Run(args []string) error {
 	}
 }
 func (a App) usage() error {
-	_, _ = fmt.Fprintln(a.Out, "usage: deploy <install|uninstall|init|remove|list|status|info|run|logs|history|doctor|config|webhook|notifications|daemon|version>")
+	_, _ = fmt.Fprintln(a.Out, "usage: deploy <install|uninstall|update|init|remove|list|status|info|run|logs|history|doctor|config|webhook|notifications|daemon|version>")
 	return nil
 }
 func (a App) daemon() error {
@@ -142,13 +145,17 @@ func (a App) install(args []string) error {
 		return fmt.Errorf("service user %q: %w", serviceUser, err)
 	}
 	c.ServiceUser = serviceUser
+	c.BinaryPath = filepath.Join(account.HomeDir, ".local", "bin", "deploy")
+	if err := installBinary(c.BinaryPath, account, "/proc/self/exe"); err != nil {
+		return err
+	}
 	if err := a.Store.Ensure(); err != nil {
 		return err
 	}
 	if err := a.Store.SaveConfig(c); err != nil {
 		return err
 	}
-	unit := "[Unit]\nDescription=Deploy Agent\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=" + account.Username + "\nGroup=" + account.Gid + "\nExecStart=/usr/local/bin/deploy daemon\nRestart=on-failure\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nReadWritePaths=" + a.Store.Etc + " " + a.Store.Var + " " + a.Store.Log + " " + a.Store.Run + "\n\n[Install]\nWantedBy=multi-user.target\n"
+	unit := "[Unit]\nDescription=Deploy Agent\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=" + account.Username + "\nGroup=" + account.Gid + "\nExecStart=" + c.BinaryPath + " daemon\nRestart=always\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nReadWritePaths=" + a.Store.Etc + " " + a.Store.Var + " " + a.Store.Log + " " + a.Store.Run + "\n\n[Install]\nWantedBy=multi-user.target\n"
 	if err := os.WriteFile("/etc/systemd/system/deploy-agent.service", []byte(unit), 0644); err != nil {
 		return err
 	}
@@ -170,6 +177,45 @@ func (a App) install(args []string) error {
 	fmt.Fprintf(a.Out, "Deploy Agent installed. Webhook base URL: %s\n", base)
 	return nil
 }
+func installBinary(destination string, account *user.User, source string) error {
+	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+		return err
+	}
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	temporary, err := os.CreateTemp(filepath.Dir(destination), ".deploy-install-")
+	if err != nil {
+		return err
+	}
+	name := temporary.Name()
+	defer os.Remove(name)
+	if _, err := io.Copy(temporary, input); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Chmod(0755); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return err
+	}
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil {
+		return err
+	}
+	if err := os.Chown(name, uid, gid); err != nil {
+		return err
+	}
+	return os.Rename(name, destination)
+}
 func (a App) uninstall() error {
 	if os.Geteuid() != 0 {
 		return errors.New("uninstall must run as root")
@@ -179,6 +225,32 @@ func (a App) uninstall() error {
 		return err
 	}
 	return exec.Command("systemctl", "daemon-reload").Run()
+}
+func (a App) update(args []string) error {
+	repository := ""
+	if len(args) == 0 {
+	} else if len(args) == 2 && args[0] == "--repo" {
+		repository = args[1]
+	} else {
+		return errors.New("usage: deploy update [--repo owner/name]")
+	}
+	config, err := a.Store.Config()
+	if err != nil {
+		return fmt.Errorf("read global config: %w", err)
+	}
+	if config.BinaryPath == "" {
+		return errors.New("this installation predates user-owned updates; rerun sudo deploy install --user " + config.ServiceUser)
+	}
+	result, err := updater.Update(repository, Version, config.BinaryPath)
+	if err != nil {
+		return err
+	}
+	if !result.Updated {
+		fmt.Fprintf(a.Out, "Already up to date (%s).\n", result.Version)
+		return nil
+	}
+	fmt.Fprintf(a.Out, "Updated to %s. Restarting daemon.\n", result.Version)
+	return a.control(daemon.Control{Action: "restart"})
 }
 func (a App) init() error {
 	root, err := git("rev-parse", "--show-toplevel")
@@ -221,29 +293,7 @@ func (a App) init() error {
 	if err := a.Store.SaveSecret(name, "webhook", secret); err != nil {
 		return err
 	}
-	repoConfig := filepath.Join(root, "deploy", "config.json")
-	if err := os.MkdirAll(filepath.Dir(repoConfig), 0755); err != nil {
-		return err
-	}
-	public := struct {
-		Version int `json:"version"`
-		Project struct {
-			Name string `json:"name"`
-		} `json:"project"`
-		Repository    model.Repository  `json:"repository"`
-		Deployment    model.Deployment  `json:"deployment"`
-		HealthCheck   model.HealthCheck `json:"healthCheck"`
-		Notifications struct {
-			Discord model.Discord `json:"discord"`
-		} `json:"notifications"`
-	}{Version: p.Version, Repository: p.Repository, Deployment: p.Deployment, HealthCheck: p.HealthCheck}
-	public.Project.Name = p.Name
-	public.Notifications.Discord = p.Discord
-	data, err := json.MarshalIndent(public, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err = os.WriteFile(repoConfig, append(data, '\n'), 0644); err != nil {
+	if err := writeRepositoryConfig(p); err != nil {
 		return err
 	}
 	c := model.GlobalConfig{Listen: "0.0.0.0", Port: 4747}
@@ -404,18 +454,71 @@ func (a App) doctor(args []string) error {
 	return nil
 }
 func (a App) config(args []string) error {
-	if len(args) != 1 || args[0] != "validate" {
-		return errors.New("usage: deploy config validate")
+	if len(args) == 0 {
+		return errors.New("usage: deploy config <validate|command>")
 	}
-	p, err := a.project(nil)
+	switch args[0] {
+	case "validate":
+		p, err := a.project(args[1:])
+		if err != nil {
+			return err
+		}
+		if err := config.ValidateProject(p); err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Out, "Configuration valid")
+		return nil
+	case "command":
+		if len(args) < 2 || args[1] == "" {
+			return errors.New("usage: deploy config command <shell-command> [--project name]")
+		}
+		p, err := a.project(args[2:])
+		if err != nil {
+			return err
+		}
+		p.Deployment.Commands[0].Command = args[1]
+		p.Deployment.Commands[0].Program = ""
+		p.Deployment.Commands[0].Args = nil
+		if err := config.ValidateProject(p); err != nil {
+			return err
+		}
+		if err := a.Store.SaveProject(p); err != nil {
+			return err
+		}
+		if err := writeRepositoryConfig(p); err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Out, "Deployment command updated")
+		return nil
+	default:
+		return errors.New("usage: deploy config <validate|command>")
+	}
+}
+
+func writeRepositoryConfig(p model.Project) error {
+	repoConfig := filepath.Join(p.Root, "deploy", "config.json")
+	if err := os.MkdirAll(filepath.Dir(repoConfig), 0755); err != nil {
+		return err
+	}
+	public := struct {
+		Version int `json:"version"`
+		Project struct {
+			Name string `json:"name"`
+		} `json:"project"`
+		Repository    model.Repository  `json:"repository"`
+		Deployment    model.Deployment  `json:"deployment"`
+		HealthCheck   model.HealthCheck `json:"healthCheck"`
+		Notifications struct {
+			Discord model.Discord `json:"discord"`
+		} `json:"notifications"`
+	}{Version: p.Version, Repository: p.Repository, Deployment: p.Deployment, HealthCheck: p.HealthCheck}
+	public.Project.Name = p.Name
+	public.Notifications.Discord = p.Discord
+	data, err := json.MarshalIndent(public, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := config.ValidateProject(p); err != nil {
-		return err
-	}
-	fmt.Fprintln(a.Out, "Configuration valid")
-	return nil
+	return os.WriteFile(repoConfig, append(data, '\n'), 0644)
 }
 func (a App) webhook(args []string) error {
 	if len(args) == 0 {

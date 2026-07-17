@@ -279,6 +279,12 @@ func (d *Daemon) handle(c Control) Reply {
 		}
 		d.enqueue(p, model.Job{Commit: c.Commit, ReceivedAt: time.Now().UTC()})
 		return Reply{Message: "deployment queued"}
+	case "restart":
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			os.Exit(0)
+		}()
+		return Reply{Message: "daemon restart requested"}
 	default:
 		return Reply{Error: "unknown action"}
 	}

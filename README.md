@@ -12,6 +12,14 @@ sudo deploy install --user "$SUDO_USER" --listen 127.0.0.1 --port 4747 --public-
 
 `install` runs the daemon as the non-root account that owns your deployment repositories. This preserves that account's SSH credentials and Docker access, so a normal `deploy init` works directly from its existing checkout. It creates protected state directories and the systemd unit, then enables the service. The daemon is deliberately not a TLS terminator. Use a reverse proxy for public HTTPS:
 
+It also copies the executable into that account's `~/.local/bin/deploy`. After installation, updating needs no elevated privileges:
+
+```bash
+deploy update
+```
+
+The command checks the latest `IDKDeadXD/AutoDeploy` GitHub release, downloads the matching Linux architecture asset, verifies `checksums.txt`, atomically replaces the user-owned binary, and restarts the daemon. Use `deploy update --repo owner/name` to use a fork or another release repository.
+
 ```caddy
 deploy.example.com {
     reverse_proxy 127.0.0.1:4747
@@ -42,6 +50,7 @@ deploy history --project flux
 deploy logs --project flux
 deploy doctor --project flux
 deploy config validate
+deploy config command 'docker compose up -d --build --remove-orphans'
 deploy webhook show
 deploy webhook reveal --yes
 deploy webhook rotate
@@ -83,3 +92,5 @@ GOOS=linux GOARCH=arm64 go build -trimpath -o dist/deploy-linux-arm64 ./cmd/depl
 ```
 
 See [docs/architecture.md](docs/architecture.md) and [docs/releasing.md](docs/releasing.md).
+
+To publish a release from a development machine with GitHub CLI authenticated, run `npm run update`. It builds both Linux assets, writes checksums, and publishes the next patch release. Use `npm run update -- 0.2.0` to choose the version explicitly; this command is not used on deployment servers.
