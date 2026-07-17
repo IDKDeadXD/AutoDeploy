@@ -9,6 +9,7 @@ type GlobalConfig struct {
 	Port          int    `json:"port"`
 	PublicURL     string `json:"publicURL"`
 	MaxConcurrent int    `json:"maxConcurrent"`
+	ServiceUser   string `json:"serviceUser"`
 }
 
 type Project struct {

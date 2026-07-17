@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -95,6 +96,7 @@ func (a App) daemon() error {
 }
 func (a App) install(args []string) error {
 	c := model.GlobalConfig{Listen: "0.0.0.0", Port: 4747, MaxConcurrent: 2}
+	serviceUser := os.Getenv("SUDO_USER")
 	for len(args) > 0 {
 		switch args[0] {
 		case "--port":
@@ -119,6 +121,12 @@ func (a App) install(args []string) error {
 			}
 			c.PublicURL = strings.TrimRight(args[1], "/")
 			args = args[2:]
+		case "--user":
+			if len(args) < 2 {
+				return errors.New("--user requires a value")
+			}
+			serviceUser = args[1]
+			args = args[2:]
 		default:
 			return fmt.Errorf("unknown install option %q", args[0])
 		}
@@ -126,21 +134,28 @@ func (a App) install(args []string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("install must run as root")
 	}
+	if serviceUser == "" || serviceUser == "root" {
+		return errors.New("install must name the non-root account that owns deployment repositories: sudo deploy install --user <name> ...")
+	}
+	account, err := user.Lookup(serviceUser)
+	if err != nil {
+		return fmt.Errorf("service user %q: %w", serviceUser, err)
+	}
+	c.ServiceUser = serviceUser
 	if err := a.Store.Ensure(); err != nil {
 		return err
 	}
 	if err := a.Store.SaveConfig(c); err != nil {
 		return err
 	}
-	unit := "[Unit]\nDescription=Deploy Agent\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=deploy-agent\nGroup=deploy-agent\nExecStart=/usr/local/bin/deploy daemon\nRestart=on-failure\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nReadWritePaths=" + a.Store.Etc + " " + a.Store.Var + " " + a.Store.Log + " " + a.Store.Run + "\n\n[Install]\nWantedBy=multi-user.target\n"
-	if _, err := exec.LookPath("useradd"); err == nil {
-		_ = exec.Command("useradd", "--system", "--home", "/nonexistent", "--shell", "/usr/sbin/nologin", "deploy-agent").Run()
-	}
+	unit := "[Unit]\nDescription=Deploy Agent\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=" + account.Username + "\nGroup=" + account.Gid + "\nExecStart=/usr/local/bin/deploy daemon\nRestart=on-failure\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nReadWritePaths=" + a.Store.Etc + " " + a.Store.Var + " " + a.Store.Log + " " + a.Store.Run + "\n\n[Install]\nWantedBy=multi-user.target\n"
 	if err := os.WriteFile("/etc/systemd/system/deploy-agent.service", []byte(unit), 0644); err != nil {
 		return err
 	}
 	for _, d := range []string{a.Store.Etc, a.Store.Var, a.Store.Log, a.Store.Run} {
-		_ = exec.Command("chown", "-R", "deploy-agent:deploy-agent", d).Run()
+		if err := exec.Command("chown", "-R", account.Uid+":"+account.Gid, d).Run(); err != nil {
+			return fmt.Errorf("set ownership on %s: %w", d, err)
+		}
 	}
 	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
 		return err

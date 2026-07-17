@@ -7,10 +7,10 @@ Deploy Agent is a small Linux daemon that receives signed GitHub push webhooks a
 Build or download the `deploy` binary, copy it to `/usr/local/bin/deploy`, then run:
 
 ```bash
-sudo deploy install --listen 127.0.0.1 --port 4747 --public-url https://deploy.example.com
+sudo deploy install --user "$SUDO_USER" --listen 127.0.0.1 --port 4747 --public-url https://deploy.example.com
 ```
 
-`install` creates the service account, protected state directories, and systemd unit, then enables the service. The daemon is deliberately not a TLS terminator. Use a reverse proxy for public HTTPS:
+`install` runs the daemon as the non-root account that owns your deployment repositories. This preserves that account's SSH credentials and Docker access, so a normal `deploy init` works directly from its existing checkout. It creates protected state directories and the systemd unit, then enables the service. The daemon is deliberately not a TLS terminator. Use a reverse proxy for public HTTPS:
 
 ```caddy
 deploy.example.com {
@@ -23,7 +23,7 @@ deploy.example.com {
 From the repository that should be deployed:
 
 ```bash
-cd /opt/flux
+cd ~/flux
 deploy init
 ```
 
@@ -59,7 +59,7 @@ deploy notifications discord enable
 deploy notifications discord remove
 ```
 
-Discord URLs live in `/etc/deploy-agent/secrets` and are never included in status output. Docker deployments require the service user to access Docker, usually through the `docker` group. That group is effectively privileged on most hosts; grant it only after reviewing this implication.
+Discord URLs live in `/etc/deploy-agent/secrets` and are never included in status output. Docker deployments require the account selected at installation to access Docker, usually through the `docker` group. That group is effectively privileged on most hosts; grant it only after reviewing this implication.
 
 ## Troubleshooting and removal
 
