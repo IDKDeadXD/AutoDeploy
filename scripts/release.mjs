@@ -16,6 +16,9 @@ function run(command, args, options = {}) {
     stdio: options.quiet ? ["ignore", "pipe", "pipe"] : "inherit",
     env: { ...process.env, ...options.env },
   });
+  if (result.error?.code === "ENOENT") {
+    throw new Error(`${command} is not installed or is not on PATH`);
+  }
   if (result.status !== 0) {
     const detail = options.quiet ? result.stderr.trim() : "";
     throw new Error(`${command} ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`);
@@ -40,8 +43,17 @@ function latestVersion() {
   try {
     return run("gh", ["release", "view", "--json", "tagName", "--jq", ".tagName"], { quiet: true });
   } catch {
-    return "0.0.0";
+    return "";
   }
+}
+
+function sourceVersion() {
+	const source = readFileSync(resolve(root, "internal", "cli", "cli.go"), "utf8");
+	const match = source.match(/Version\s*=\s*"(\d+\.\d+\.\d+)"/);
+	if (!match) {
+		throw new Error("could not find the source version in internal/cli/cli.go");
+	}
+	return match[1];
 }
 
 function requireGitHubAuth() {
@@ -71,7 +83,8 @@ run("git", ["diff", "--quiet"]);
 run("git", ["diff", "--cached", "--quiet"]);
 run("git", ["push", "origin", "HEAD"]);
 
-const version = explicitVersion ? normalizeVersion(explicitVersion) : nextPatch(latestVersion());
+const latest = latestVersion();
+const version = explicitVersion ? normalizeVersion(explicitVersion) : latest ? nextPatch(latest) : sourceVersion();
 const tag = `v${version}`;
 const commit = run("git", ["rev-parse", "--short", "HEAD"], { quiet: true });
 const built = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
