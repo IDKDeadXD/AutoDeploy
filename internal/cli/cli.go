@@ -188,6 +188,17 @@ func installBinary(destination string, account *user.User, source string) error 
 	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
 		return err
 	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return err
+	}
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil {
+		return err
+	}
+	if err := os.Chown(filepath.Dir(destination), uid, gid); err != nil {
+		return err
+	}
 	input, err := os.Open(source)
 	if err != nil {
 		return err
@@ -208,14 +219,6 @@ func installBinary(destination string, account *user.User, source string) error 
 		return err
 	}
 	if err := temporary.Close(); err != nil {
-		return err
-	}
-	uid, err := strconv.Atoi(account.Uid)
-	if err != nil {
-		return err
-	}
-	gid, err := strconv.Atoi(account.Gid)
-	if err != nil {
 		return err
 	}
 	if err := os.Chown(name, uid, gid); err != nil {
