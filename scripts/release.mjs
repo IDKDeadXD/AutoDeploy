@@ -87,6 +87,10 @@ const latest = latestVersion();
 const version = explicitVersion ? normalizeVersion(explicitVersion) : latest ? nextPatch(latest) : sourceVersion();
 const tag = `v${version}`;
 const commit = run("git", ["rev-parse", "--short", "HEAD"], { quiet: true });
+const branch = run("git", ["branch", "--show-current"], { quiet: true });
+if (!branch) {
+	throw new Error("release publishing requires a checked-out branch");
+}
 const built = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 const ldflags = `-s -w -X github.com/idkde/deploy-agent/internal/cli.Version=${version} -X github.com/idkde/deploy-agent/internal/cli.Commit=${commit} -X github.com/idkde/deploy-agent/internal/cli.Built=${built}`;
 
@@ -102,5 +106,5 @@ const checksums = `${assets.map((path) => `${sha256(path)}  ${basename(path)}`).
 const checksumPath = resolve(dist, "checksums.txt");
 await writeFile(checksumPath, checksums, "utf8");
 
-run("gh", ["release", "create", tag, ...assets, checksumPath, "--title", tag, "--generate-notes", "--target", "HEAD"]);
+run("gh", ["release", "create", tag, ...assets, checksumPath, "--title", tag, "--generate-notes", "--target", branch]);
 console.log(`Published ${tag}. VPS servers can now run: deploy update`);
