@@ -76,17 +76,18 @@ func (a App) Run(args []string) error {
 	case "notifications":
 		return a.notifications(args[1:])
 	case "version":
-		fmt.Fprintf(a.Out, "deploy %s\ncommit: %s\nbuilt: %s\n", Version, Commit, Built)
+		writeSection(a.Out, "Deploy Agent")
+		writeFields(a.Out,
+			[2]string{"Version", Version},
+			[2]string{"Commit", Commit},
+			[2]string{"Built", Built},
+		)
 		return nil
 	case "help", "--help", "-h":
 		return a.usage()
 	default:
-		return fmt.Errorf("unknown command %q", args[0])
+		return fmt.Errorf("unknown command %q\nrun 'deploy help' to see available commands", args[0])
 	}
-}
-func (a App) usage() error {
-	_, _ = fmt.Fprintln(a.Out, "usage: deploy <install|uninstall|update|init|remove|list|status|info|run|logs|history|doctor|config|webhook|notifications|daemon|version>")
-	return nil
 }
 func (a App) daemon() error {
 	c, err := a.Store.Config()
@@ -138,7 +139,7 @@ func (a App) install(args []string) error {
 		return errors.New("install must run as root")
 	}
 	if serviceUser == "" || serviceUser == "root" {
-		return errors.New("install must name the non-root account that owns deployment repositories: sudo deploy install --user <name> ...")
+		return errors.New("install must name the non-root account that owns deployment repositories: sudo deploy install --user <name>")
 	}
 	account, err := user.Lookup(serviceUser)
 	if err != nil {
@@ -174,7 +175,13 @@ func (a App) install(args []string) error {
 	if base == "" {
 		base = "http://" + net.JoinHostPort(c.Listen, strconv.Itoa(c.Port))
 	}
-	fmt.Fprintf(a.Out, "Deploy Agent installed. Webhook base URL: %s\n", base)
+	writeSection(a.Out, "Deploy Agent installed")
+	writeFields(a.Out,
+		[2]string{"Service user", c.ServiceUser},
+		[2]string{"Listen address", net.JoinHostPort(c.Listen, strconv.Itoa(c.Port))},
+		[2]string{"Webhook base URL", base},
+		[2]string{"Binary path", c.BinaryPath},
+	)
 	return nil
 }
 func installBinary(destination string, account *user.User, source string) error {
@@ -246,10 +253,10 @@ func (a App) update(args []string) error {
 		return err
 	}
 	if !result.Updated {
-		fmt.Fprintf(a.Out, "Already up to date (%s).\n", result.Version)
+		fmt.Fprintf(a.Out, "[ok] Already up to date (%s).\n", result.Version)
 		return nil
 	}
-	fmt.Fprintf(a.Out, "Updated to %s. Restarting daemon.\n", result.Version)
+	fmt.Fprintf(a.Out, "[ok] Updated to %s. Restarting daemon.\n", result.Version)
 	return a.control(daemon.Control{Action: "restart"})
 }
 func (a App) init() error {
@@ -304,7 +311,17 @@ func (a App) init() error {
 	if base == "" {
 		base = "http://" + net.JoinHostPort(c.Listen, strconv.Itoa(c.Port))
 	}
-	fmt.Fprintf(a.Out, "\nProject registered successfully.\n\nPayload URL:\n%s/hooks/%s/%s\n\nContent type:\napplication/json\n\nSecret:\n%s\n\nEvents:\nPush events only\n", strings.TrimRight(base, "/"), p.Name, p.Token, secret)
+	fmt.Fprintln(a.Out)
+	writeSection(a.Out, "Project registered")
+	writeFields(a.Out,
+		[2]string{"Project", p.Name},
+		[2]string{"Repository", p.Repository.URL},
+		[2]string{"Branch", p.Repository.Branch},
+		[2]string{"Payload URL", fmt.Sprintf("%s/hooks/%s/%s", strings.TrimRight(base, "/"), p.Name, p.Token)},
+		[2]string{"Content type", "application/json"},
+		[2]string{"Secret", secret},
+		[2]string{"Events", "Push events only"},
+	)
 	return nil
 }
 func (a App) ask(r *bufio.Reader, label, def string) string {
@@ -352,7 +369,7 @@ func (a App) remove(args []string) error {
 	for _, kind := range []string{"webhook", "discord"} {
 		_ = os.Remove(filepath.Join(a.Store.Etc, "secrets", p.Name+"-"+kind+".secret"))
 	}
-	fmt.Fprintf(a.Out, "Removed project %s. Repository files were not changed.\n", p.Name)
+	fmt.Fprintf(a.Out, "[ok] Removed project %s. Repository files were not changed.\n", p.Name)
 	return nil
 }
 func (a App) list() error {
@@ -360,10 +377,11 @@ func (a App) list() error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(a.Out, "PROJECT\tBRANCH\tROOT")
+	rows := [][]string{{"PROJECT", "BRANCH", "ROOT"}}
 	for _, p := range projects {
-		fmt.Fprintf(a.Out, "%s\t%s\t%s\n", p.Name, p.Repository.Branch, p.Root)
+		rows = append(rows, []string{p.Name, p.Repository.Branch, p.Root})
 	}
+	writeTable(a.Out, rows)
 	return nil
 }
 func (a App) status(args []string) error {
@@ -375,7 +393,26 @@ func (a App) status(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Out, "Project: %s\nStatus: %s\nBranch: %s\nLast successful: %s\nLast failed: %s\n", p.Name, st.Status, p.Repository.Branch, st.LastSuccessfulCommit, st.LastFailedCommit)
+	writeSection(a.Out, "Project status")
+	writeFields(a.Out,
+		[2]string{"Project", p.Name},
+		[2]string{"Status", st.Status},
+		[2]string{"Branch", p.Repository.Branch},
+		[2]string{"Last detected", formatCommit(st.LastDetectedCommit)},
+		[2]string{"Last attempted", formatCommit(st.LastAttemptedCommit)},
+		[2]string{"Last successful", formatCommit(st.LastSuccessfulCommit)},
+		[2]string{"Last failed", formatCommit(st.LastFailedCommit)},
+	)
+	if st.Pending != nil {
+		fmt.Fprintln(a.Out)
+		writeSection(a.Out, "Pending deployment")
+		writeFields(a.Out,
+			[2]string{"Commit", formatCommit(st.Pending.Commit)},
+			[2]string{"Author", st.Pending.Author},
+			[2]string{"Message", st.Pending.Message},
+			[2]string{"Received", formatTime(st.Pending.ReceivedAt)},
+		)
+	}
 	return nil
 }
 func (a App) run(args []string) error {
@@ -386,11 +423,24 @@ func (a App) run(args []string) error {
 	dry := has(args, "--dry-run")
 	commit := value(args, "--commit")
 	if dry {
-		fmt.Fprintf(a.Out, "Target remote: %s\nTarget branch: %s\nGit strategy: %s\nCommands:\n", p.Repository.Remote, p.Repository.Branch, p.Repository.UpdateStrategy)
+		writeSection(a.Out, "Deployment preview")
+		writeFields(a.Out,
+			[2]string{"Project", p.Name},
+			[2]string{"Remote", p.Repository.Remote},
+			[2]string{"Branch", p.Repository.Branch},
+			[2]string{"Git strategy", p.Repository.UpdateStrategy},
+			[2]string{"Commit", emptyValue(commit)},
+			[2]string{"Health check", formatBool(p.HealthCheck.Enabled)},
+		)
+		fmt.Fprintln(a.Out)
+		fmt.Fprintln(a.Out, "Commands:")
 		for _, c := range p.Deployment.Commands {
-			fmt.Fprintf(a.Out, "- %s\n", c.Name)
+			target := c.Command
+			if target == "" && c.Program != "" {
+				target = strings.Join(append([]string{c.Program}, c.Args...), " ")
+			}
+			fmt.Fprintf(a.Out, "  - %s: %s\n", c.Name, emptyValue(target))
 		}
-		fmt.Fprintf(a.Out, "Health check enabled: %t\n", p.HealthCheck.Enabled)
 		return nil
 	}
 	return a.control(daemon.Control{Action: "run", Project: p.Name, Commit: commit})
@@ -405,10 +455,11 @@ func (a App) history(args []string) error {
 		return err
 	}
 	sortRecords(records)
-	fmt.Fprintln(a.Out, "STATUS\tPROJECT\tCOMMIT\tBRANCH\tDURATION\tSTARTED")
+	rows := [][]string{{"STATUS", "PROJECT", "COMMIT", "BRANCH", "DURATION", "STARTED"}}
 	for _, r := range records {
-		fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Status, r.Project, short(r.Commit), r.Branch, time.Duration(r.DurationMillis*int64(time.Millisecond)).Round(time.Second), r.StartedAt.Format(time.RFC3339))
+		rows = append(rows, []string{r.Status, r.Project, formatCommit(r.Commit), r.Branch, formatDuration(r.DurationMillis), formatTime(r.StartedAt)})
 	}
+	writeTable(a.Out, rows)
 	return nil
 }
 func (a App) logs(args []string) error {
@@ -420,9 +471,11 @@ func (a App) logs(args []string) error {
 	if err != nil {
 		return err
 	}
+	rows := [][]string{{"STARTED", "ID", "STATUS", "ERROR"}}
 	for _, r := range records {
-		fmt.Fprintf(a.Out, "%s %s %s %s\n", r.StartedAt.Format(time.RFC3339), r.ID, r.Status, r.Error)
+		rows = append(rows, []string{formatTime(r.StartedAt), r.ID, r.Status, emptyValue(r.Error)})
 	}
+	writeTable(a.Out, rows)
 	if has(args, "--follow") {
 		return errors.New("log following requires journald: journalctl -fu deploy-agent")
 	}
@@ -433,7 +486,12 @@ func (a App) doctor(args []string) error {
 	checks := []struct {
 		name string
 		ok   bool
-	}{{"Global config", func() bool { _, e := a.Store.Config(); return e == nil }()}, {"Git installed", func() bool { _, e := exec.LookPath("git"); return e == nil }()}, {"Docker installed", func() bool { _, e := exec.LookPath("docker"); return e == nil }()}, {"Deploy control socket", func() bool { _, e := os.Stat(filepath.Join(a.Store.Run, "deploy.sock")); return e == nil }()}}
+	}{
+		{"Global config", func() bool { _, e := a.Store.Config(); return e == nil }()},
+		{"Git installed", func() bool { _, e := exec.LookPath("git"); return e == nil }()},
+		{"Docker installed", func() bool { _, e := exec.LookPath("docker"); return e == nil }()},
+		{"Deploy control socket", func() bool { _, e := os.Stat(filepath.Join(a.Store.Run, "deploy.sock")); return e == nil }()},
+	}
 	if p, e := a.project(args); e == nil {
 		checks = append(checks, struct {
 			name string
@@ -441,12 +499,10 @@ func (a App) doctor(args []string) error {
 		}{"Project configuration valid", config.ValidateProject(p) == nil})
 	}
 	for _, c := range checks {
-		mark := "✓"
 		if !c.ok {
-			mark = "✗"
 			critical = true
 		}
-		fmt.Fprintf(a.Out, "%s %s\n", mark, c.name)
+		fmt.Fprintf(a.Out, "%s %s\n", formatCheck(c.ok), c.name)
 	}
 	if critical {
 		return errors.New("one or more critical checks failed")
@@ -466,7 +522,7 @@ func (a App) config(args []string) error {
 		if err := config.ValidateProject(p); err != nil {
 			return err
 		}
-		fmt.Fprintln(a.Out, "Configuration valid")
+		fmt.Fprintln(a.Out, "[ok] Configuration valid")
 		return nil
 	case "command":
 		if len(args) < 2 || args[1] == "" {
@@ -488,7 +544,7 @@ func (a App) config(args []string) error {
 		if err := writeRepositoryConfig(p); err != nil {
 			return err
 		}
-		fmt.Fprintln(a.Out, "Deployment command updated")
+		fmt.Fprintln(a.Out, "[ok] Deployment command updated")
 		return nil
 	default:
 		return errors.New("usage: deploy config <validate|command>")
@@ -539,7 +595,11 @@ func (a App) webhook(args []string) error {
 	}
 	switch args[0] {
 	case "show":
-		fmt.Fprintf(a.Out, "URL: %s/hooks/%s/%s\nSecret: %s…%s\n", base, p.Name, p.Token, secret[:8], secret[len(secret)-4:])
+		writeSection(a.Out, "Webhook")
+		writeFields(a.Out,
+			[2]string{"URL", fmt.Sprintf("%s/hooks/%s/%s", base, p.Name, p.Token)},
+			[2]string{"Secret", maskSecret(secret)},
+		)
 	case "reveal":
 		if !has(args, "--yes") {
 			return errors.New("refusing to reveal secret without --yes")
@@ -553,7 +613,8 @@ func (a App) webhook(args []string) error {
 		if e = a.Store.SaveSecret(p.Name, "webhook", newSecret); e != nil {
 			return e
 		}
-		fmt.Fprintf(a.Out, "New webhook secret (shown once):\n%s\n", newSecret)
+		writeSection(a.Out, "New webhook secret")
+		fmt.Fprintln(a.Out, newSecret)
 	default:
 		return errors.New("usage: deploy webhook <show|reveal|rotate>")
 	}
@@ -579,21 +640,40 @@ func (a App) notifications(args []string) error {
 		if err := a.Store.SaveSecret(p.Name, "discord", url); err != nil {
 			return err
 		}
-		return a.Store.SaveProject(p)
+		if err := a.Store.SaveProject(p); err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Out, "[ok] Discord notifications configured")
+		return nil
 	case "status":
 		_, e := a.Store.Secret(p.Name, "discord")
-		fmt.Fprintf(a.Out, "Discord notifications: %t\n", p.Discord.Enabled && e == nil)
+		writeSection(a.Out, "Discord notifications")
+		writeFields(a.Out,
+			[2]string{"Status", formatBool(p.Discord.Enabled && e == nil)},
+		)
 		return nil
 	case "enable":
 		p.Discord.Enabled = true
-		return a.Store.SaveProject(p)
+		if err := a.Store.SaveProject(p); err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Out, "[ok] Discord notifications enabled")
+		return nil
 	case "disable":
 		p.Discord.Enabled = false
-		return a.Store.SaveProject(p)
+		if err := a.Store.SaveProject(p); err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Out, "[ok] Discord notifications disabled")
+		return nil
 	case "remove":
 		p.Discord.Enabled = false
 		_ = os.Remove(filepath.Join(a.Store.Etc, "secrets", p.Name+"-discord.secret"))
-		return a.Store.SaveProject(p)
+		if err := a.Store.SaveProject(p); err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Out, "[ok] Discord notifications removed")
+		return nil
 	case "test":
 		url, e := a.Store.Secret(p.Name, "discord")
 		if e != nil {
@@ -601,7 +681,7 @@ func (a App) notifications(args []string) error {
 		}
 		e = notify.Discord(context.Background(), url, model.Record{Project: p.Name, Status: "success", Commit: "manual", Branch: p.Repository.Branch, Message: "Deploy Agent notification test"})
 		if e == nil {
-			fmt.Fprintln(a.Out, "Discord test notification sent")
+			fmt.Fprintln(a.Out, "[ok] Discord test notification sent")
 		}
 		return e
 	default:
@@ -624,7 +704,9 @@ func (a App) control(c daemon.Control) error {
 	if r.Error != "" {
 		return errors.New(r.Error)
 	}
-	fmt.Fprintln(a.Out, r.Message)
+	if r.Message != "" {
+		fmt.Fprintf(a.Out, "[ok] %s\n", r.Message)
+	}
 	return nil
 }
 func git(args ...string) (string, error) { return gitAt("", args...) }

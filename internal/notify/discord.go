@@ -46,7 +46,7 @@ func short(v string) string {
 	return v
 }
 func sanitize(v string) string {
-	v = strings.ReplaceAll(v, "@", "@​")
+	v = strings.ReplaceAll(v, "@", "@\u200b")
 	if len(v) > 512 {
 		return v[:512]
 	}

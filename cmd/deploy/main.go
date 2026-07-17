@@ -9,7 +9,7 @@ import (
 
 func main() {
 	if err := cli.New().Run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "deploy:", err)
+		fmt.Fprintln(os.Stderr, "deploy: error:", err)
 		os.Exit(1)
 	}
 }
