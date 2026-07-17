@@ -44,6 +44,20 @@ function latestVersion() {
   }
 }
 
+function requireGitHubAuth() {
+	const result = spawnSync("gh", ["auth", "status"], {
+		cwd: root,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	if (result.error?.code === "ENOENT") {
+		throw new Error("GitHub CLI is not installed. Install it with: winget install --id GitHub.cli");
+	}
+	if (result.status !== 0) {
+		throw new Error("GitHub CLI is not authenticated. Run: gh auth login");
+	}
+}
+
 function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
@@ -52,7 +66,7 @@ if (!existsSync(resolve(root, "go.mod"))) {
   throw new Error("run this command from the Deploy Agent repository");
 }
 
-run("gh", ["auth", "status"]);
+requireGitHubAuth();
 run("git", ["diff", "--quiet"]);
 run("git", ["diff", "--cached", "--quiet"]);
 run("git", ["push", "origin", "HEAD"]);
