@@ -9,12 +9,21 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = resolve(root, "dist");
 const explicitVersion = process.argv[2];
 
+function environmentFor(command, overrides = {}) {
+	const env = { ...process.env, ...overrides };
+	if (command === "gh") {
+		delete env.GH_TOKEN;
+		delete env.GITHUB_TOKEN;
+	}
+	return env;
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: root,
     encoding: "utf8",
     stdio: options.quiet ? ["ignore", "pipe", "pipe"] : "inherit",
-    env: { ...process.env, ...options.env },
+    env: environmentFor(command, options.env),
   });
   if (result.error?.code === "ENOENT") {
     throw new Error(`${command} is not installed or is not on PATH`);
@@ -61,6 +70,7 @@ function requireGitHubAuth() {
 		cwd: root,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
+		env: environmentFor("gh"),
 	});
 	if (result.error?.code === "ENOENT") {
 		throw new Error("GitHub CLI is not installed. Install it with: winget install --id GitHub.cli");
