@@ -20,7 +20,7 @@ function run(command, args, options = {}) {
     const detail = options.quiet ? result.stderr.trim() : "";
     throw new Error(`${command} ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`);
   }
-  return result.stdout.trim();
+	return result.stdout?.trim() ?? "";
 }
 
 function normalizeVersion(value) {
