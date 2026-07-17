@@ -70,6 +70,14 @@ function requireGitHubAuth() {
 	}
 }
 
+function goExecutable() {
+	if (process.platform !== "win32") {
+		return "go";
+	}
+	const installed = "C:\\Program Files\\Go\\bin\\go.exe";
+	return existsSync(installed) ? installed : "go";
+}
+
 function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
@@ -93,10 +101,11 @@ if (!branch) {
 }
 const built = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 const ldflags = `-s -w -X github.com/idkde/deploy-agent/internal/cli.Version=${version} -X github.com/idkde/deploy-agent/internal/cli.Commit=${commit} -X github.com/idkde/deploy-agent/internal/cli.Built=${built}`;
+const go = goExecutable();
 
 await mkdir(dist, { recursive: true });
 for (const [arch, asset] of [["amd64", "deploy-linux-amd64"], ["arm64", "deploy-linux-arm64"]]) {
-  run("go", ["build", "-trimpath", "-ldflags", ldflags, "-o", resolve(dist, asset), "./cmd/deploy"], {
+	run(go, ["build", "-trimpath", "-ldflags", ldflags, "-o", resolve(dist, asset), "./cmd/deploy"], {
     env: { GOOS: "linux", GOARCH: arch },
   });
 }
